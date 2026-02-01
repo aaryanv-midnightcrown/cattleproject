@@ -1,0 +1,228 @@
+import pygame
+import sys
+import random
+import math
+import numpy as np
+
+# =====================
+# Settings
+# =====================
+WINDOW_WIDTH, WINDOW_HEIGHT = 900, 900
+MAP_SIZE = 20
+GRID_CELL = WINDOW_WIDTH // MAP_SIZE
+
+NUM_CAMPS = 5
+NUM_HERDS = 5
+NUM_WATER = 3
+NUM_VILLAGES = 4
+
+# =====================
+# Colors
+# =====================
+GREEN = (55, 170, 55)          # grass (slightly lighter)
+RED = (220, 20, 60)            # cattle camps
+PURPLE = (150, 60, 200)        # herd gatherings
+BLUE = (40, 150, 255)          # water
+BROWN = (140, 90, 40)          # villages
+ORANGE = (255, 150, 0)         # arrows
+
+LIGHT_YELLOW = (255, 255, 190)
+MEDIUM_YELLOW = (255, 235, 120)
+DARK_YELLOW = (200, 200, 0)
+
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+PANEL_BG = (20, 20, 20, 220)
+
+# =====================
+# Init
+# =====================
+pygame.init()
+screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+pygame.display.set_caption("Cattle Movement AI Simulation")
+font = pygame.font.SysFont("Arial", 18)
+big_font = pygame.font.SysFont("Arial", 24)
+
+# =====================
+# Button
+# =====================
+class Button:
+    def __init__(self, text, x, y, w, h):
+        self.text = text
+        self.rect = pygame.Rect(x, y, w, h)
+
+    def draw(self):
+        pygame.draw.rect(screen, BLACK, self.rect, border_radius=6)
+        txt = font.render(self.text, True, WHITE)
+        screen.blit(txt, txt.get_rect(center=self.rect.center))
+
+    def clicked(self, event):
+        return event.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(event.pos)
+
+# =====================
+# Scenario
+# =====================
+def generate_scenario():
+    camps = [(random.randrange(MAP_SIZE), random.randrange(MAP_SIZE)) for _ in range(NUM_CAMPS)]
+    herds = [(random.randrange(MAP_SIZE), random.randrange(MAP_SIZE)) for _ in range(NUM_HERDS)]
+    water = [(random.randrange(MAP_SIZE), random.randrange(MAP_SIZE)) for _ in range(NUM_WATER)]
+    villages = [(random.randrange(MAP_SIZE), random.randrange(MAP_SIZE)) for _ in range(NUM_VILLAGES)]
+
+    arrows = []
+    for hx, hy in herds:
+        arrows.append((hx, hy, random.randint(-3, 3), random.randint(-3, 3)))
+
+    return camps, herds, water, villages, arrows
+
+# =====================
+# AI Prediction
+# =====================
+def generate_prediction(camps, herds, water, villages):
+    scores = np.zeros((MAP_SIZE, MAP_SIZE))
+
+    for x in range(MAP_SIZE):
+        for y in range(MAP_SIZE):
+            s = 0
+            for wx, wy in water:
+                s += max(0, 6 - math.dist((x,y),(wx,wy)))
+            for vx, vy in villages:
+                s += max(0, 5 - math.dist((x,y),(vx,vy)))
+            for hx, hy in herds:
+                s += max(0, 4 - math.dist((x,y),(hx,hy)))
+            scores[x,y] = s
+
+    flat = scores.flatten()
+    t1, t2, t3 = np.percentile(flat, [70, 40, 10])
+
+    pred = np.zeros_like(scores, dtype=int)
+    for x in range(MAP_SIZE):
+        for y in range(MAP_SIZE):
+            if scores[x,y] >= t1:
+                pred[x,y] = 3
+            elif scores[x,y] >= t2:
+                pred[x,y] = 2
+            elif scores[x,y] >= t3:
+                pred[x,y] = 1
+    return pred
+
+# =====================
+# Draw Map
+# =====================
+def draw_map(camps, herds, water, villages, arrows, pred=None):
+    screen.fill(GREEN)
+
+    if pred is not None:
+        for x in range(MAP_SIZE):
+            for y in range(MAP_SIZE):
+                c = None
+                if pred[x,y] == 3: c = DARK_YELLOW
+                elif pred[x,y] == 2: c = MEDIUM_YELLOW
+                elif pred[x,y] == 1: c = LIGHT_YELLOW
+                if c:
+                    pygame.draw.rect(screen, c, (x*GRID_CELL,y*GRID_CELL,GRID_CELL,GRID_CELL))
+
+    for wx, wy in water:
+        pygame.draw.rect(screen, BLUE, (wx*GRID_CELL,wy*GRID_CELL,GRID_CELL,GRID_CELL))
+
+    for cx, cy in camps:
+        pygame.draw.circle(screen, RED, (cx*GRID_CELL+GRID_CELL//2, cy*GRID_CELL+GRID_CELL//2), GRID_CELL//2)
+
+    for hx, hy in herds:
+        pygame.draw.polygon(screen, PURPLE, [
+            (hx*GRID_CELL+GRID_CELL//2, hy*GRID_CELL),
+            (hx*GRID_CELL, hy*GRID_CELL+GRID_CELL),
+            (hx*GRID_CELL+GRID_CELL, hy*GRID_CELL+GRID_CELL)
+        ])
+
+    for vx, vy in villages:
+        pygame.draw.rect(screen, BROWN, (vx*GRID_CELL+10, vy*GRID_CELL+20, GRID_CELL-20, GRID_CELL-20))
+
+    for x,y,dx,dy in arrows:
+        start = (x*GRID_CELL+GRID_CELL//2, y*GRID_CELL+GRID_CELL//2)
+        end = ((x+dx)*GRID_CELL+GRID_CELL//2, (y+dy)*GRID_CELL+GRID_CELL//2)
+        pygame.draw.line(screen, ORANGE, start, end, 3)
+
+# =====================
+# Legend Overlay
+# =====================
+def draw_legend():
+    panel = pygame.Surface((520, 420), pygame.SRCALPHA)
+    panel.fill(PANEL_BG)
+    screen.blit(panel, (190, 200))
+
+    title = big_font.render("Map Key & AI Prediction Legend", True, WHITE)
+    screen.blit(title, (230, 220))
+
+    lines = [
+        ("Red Circle", "Cattle Camps"),
+        ("Purple Triangle", "Herd Gatherings"),
+        ("Blue Square", "Water Sources"),
+        ("Brown House", "Villages"),
+        ("Orange Arrow", "Likely Movement Direction"),
+        ("", ""),
+        ("Dark Yellow", "Strong AI Confidence"),
+        ("Yellow", "Probable"),
+        ("Light Yellow", "Possible"),
+        ("Green", "Unlikely"),
+    ]
+
+    y = 270
+    for a,b in lines:
+        if a:
+            screen.blit(font.render(a+" :", True, WHITE), (230, y))
+            screen.blit(font.render(b, True, WHITE), (420, y))
+        y += 30
+
+    close_rect = pygame.Rect(660, 210, 30, 30)
+    pygame.draw.rect(screen, (180,50,50), close_rect)
+    screen.blit(font.render("X", True, WHITE), (670, 212))
+    return close_rect
+
+# =====================
+# Main Loop
+# =====================
+def main():
+    clock = pygame.time.Clock()
+    show_ai = False
+    show_legend_flag = False
+
+    btn_ai = Button("Toggle AI", 20, 20, 120, 40)
+    btn_legend = Button("Show Key", WINDOW_WIDTH//2-70, 20, 140, 40)
+    btn_next = Button("Next Scenario", WINDOW_WIDTH-180, 20, 160, 40)
+
+    camps, herds, water, villages, arrows = generate_scenario()
+    pred = generate_prediction(camps, herds, water, villages)
+
+    running = True
+    while running:
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                running = False
+            if btn_ai.clicked(e):
+                show_ai = not show_ai
+            if btn_next.clicked(e):
+                camps, herds, water, villages, arrows = generate_scenario()
+                pred = generate_prediction(camps, herds, water, villages)
+            if btn_legend.clicked(e):
+                show_legend_flag = True
+
+        draw_map(camps, herds, water, villages, arrows, pred if show_ai else None)
+
+        btn_ai.draw()
+        btn_legend.draw()
+        btn_next.draw()
+
+        if show_legend_flag:
+            close_rect = draw_legend()
+            if pygame.mouse.get_pressed()[0] and close_rect.collidepoint(pygame.mouse.get_pos()):
+                show_legend_flag = False
+
+        pygame.display.flip()
+        clock.tick(30)
+
+    pygame.quit()
+    sys.exit()
+
+# =====================
+if __name__ == "__main__":
+    main()
