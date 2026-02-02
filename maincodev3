@@ -1,0 +1,283 @@
+import pygame
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import random
+import math
+import os
+import time
+
+# ---------------- CONFIG ----------------
+WIDTH, HEIGHT = 1200, 820
+GRID = 30
+CELL = 20
+UI_HEIGHT = 220
+FPS = 30
+MODEL_PATH = "cattle_model_v2.pt"
+
+# Colors
+GRASS = (125, 200, 125)
+BLUE = (70, 140, 220)
+RED = (200, 70, 70)
+PURPLE = (160, 90, 200)
+VEG = (90, 180, 90)
+YELLOW_L = (255, 255, 170)
+YELLOW = (255, 230, 120)
+YELLOW_D = (220, 190, 40)
+WHITE = (245, 245, 245)
+GRAY = (70, 70, 70)
+BLACK = (0, 0, 0)
+HIGHLIGHT = (255, 200, 80)
+
+# ---------------- AI MODEL ----------------
+class CattleNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(9, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+model = CattleNet()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+loss_fn = nn.BCELoss()
+
+if os.path.exists(MODEL_PATH):
+    model.load_state_dict(torch.load(MODEL_PATH))
+    print("✅ Loaded saved AI model", flush=True)
+
+# ---------------- INIT ----------------
+pygame.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Cattle Movement AI – Multi-Factor Simulation")
+font = pygame.font.SysFont("arial", 16)
+bigfont = pygame.font.SysFont("arial", 20)
+clock = pygame.time.Clock()
+
+# ---------------- STATE ----------------
+show_ai = False
+show_key = False
+status_msg = ""
+status_time = 0
+
+train_X, train_y = [], []
+
+variables = [
+    "water", "village", "camp", "veg",
+    "food", "water_stress", "temp"
+]
+
+counts = {v: 1 for v in variables}
+selected_var = 0
+
+# ---------------- HELPERS ----------------
+def popup(msg):
+    global status_msg, status_time
+    status_msg = msg
+    status_time = time.time()
+
+def dist(a, b):
+    return math.hypot(a[0]-b[0], a[1]-b[1])
+
+def random_points(n):
+    return [(random.randint(0, GRID-1), random.randint(0, GRID-1)) for _ in range(n)]
+
+# ---------------- SCENARIO ----------------
+def generate_scenario():
+    return {
+        "water": random_points(counts["water"]),
+        "village": random_points(counts["village"]),
+        "camp": random_points(counts["camp"]),
+        "veg": random_points(counts["veg"]),
+        "food": random.random() * counts["food"],
+        "water_stress": random.random() * counts["water_stress"],
+        "temp": random.uniform(0.7, 1.4)
+    }
+
+scenario = generate_scenario()
+
+# ---------------- TRAINING ----------------
+def compute_label(x, y, sc):
+    score = 0
+    for p in sc["water"]:
+        score += 2.2 / (dist((x,y), p) + 1)
+    for p in sc["veg"]:
+        score += 2.8 / (dist((x,y), p) + 1)
+    for p in sc["village"]:
+        score += 1.2 / (dist((x,y), p) + 1)
+    for p in sc["camp"]:
+        score += 1.1 / (dist((x,y), p) + 1)
+
+    score *= (1 + sc["food"])
+    score *= (1 + sc["water_stress"])
+    score /= sc["temp"]
+
+    return 1 if score > 1.4 else 0
+
+def train_ai():
+    if len(train_X) < 300:
+        return
+    X = torch.tensor(train_X, dtype=torch.float32)
+    y = torch.tensor(train_y, dtype=torch.float32).unsqueeze(1)
+    for _ in range(8):
+        optimizer.zero_grad()
+        loss = loss_fn(model(X), y)
+        loss.backward()
+        optimizer.step()
+
+# ---------------- DRAW ----------------
+def draw_grid():
+    for x in range(GRID):
+        for y in range(GRID):
+            pygame.draw.rect(screen, GRASS, (x*CELL, y*CELL, CELL, CELL))
+
+def draw_points(points, color, r):
+    for p in points:
+        pygame.draw.circle(screen, color, (p[0]*CELL+10, p[1]*CELL+10), r)
+
+def draw_camps(points):
+    for p in points:
+        pygame.draw.rect(screen, RED, (p[0]*CELL+4, p[1]*CELL+4, 12, 12))
+
+def draw_ai_overlay(sc):
+    preds = []
+    for x in range(GRID):
+        for y in range(GRID):
+            features = [
+                min(dist((x,y), p) for p in sc["water"]) if sc["water"] else GRID,
+                min(dist((x,y), p) for p in sc["village"]) if sc["village"] else GRID,
+                min(dist((x,y), p) for p in sc["camp"]) if sc["camp"] else GRID,
+                min(dist((x,y), p) for p in sc["veg"]) if sc["veg"] else GRID,
+                sc["food"],
+                sc["water_stress"],
+                sc["temp"],
+                random.random(),
+                random.random()
+            ]
+            with torch.no_grad():
+                preds.append(model(torch.tensor(features)).item())
+
+    mn, mx = min(preds), max(preds)
+    i = 0
+    for x in range(GRID):
+        for y in range(GRID):
+            p = (preds[i]-mn)/(mx-mn+1e-6)
+            i += 1
+            if p > 0.7:
+                c = YELLOW_D
+            elif p > 0.45:
+                c = YELLOW
+            elif p > 0.25:
+                c = YELLOW_L
+            else:
+                continue
+            pygame.draw.rect(screen, c, (x*CELL, y*CELL, CELL, CELL))
+
+def draw_ui():
+    pygame.draw.rect(screen, GRAY, (0, GRID*CELL, WIDTH, UI_HEIGHT))
+    y = GRID*CELL + 10
+
+    controls = "A:AI  N:New+Train  S:Save  K:Key  ↑↓:Select  [ ]:Change"
+    screen.blit(bigfont.render(controls, True, WHITE), (10, y))
+
+    y += 35
+    for i,v in enumerate(variables):
+        color = HIGHLIGHT if i == selected_var else WHITE
+        screen.blit(
+            font.render(f"{v.upper():14}  [{counts[v]}]", True, color),
+            (10 + (i//4)*300, y + (i%4)*30)
+        )
+
+    if status_msg and time.time()-status_time < 2:
+        screen.blit(bigfont.render(status_msg, True, WHITE), (800, y))
+
+def draw_key():
+    pygame.draw.rect(screen, BLACK, (260, 120, 680, 480))
+    lines = [
+        "LEGEND",
+        "Blue circles: Water sources",
+        "Purple circles: Villages",
+        "Red squares: Cattle camps",
+        "Green circles: Vegetation (NDVI proxy)",
+        "",
+        "Light Yellow: Low probability",
+        "Yellow: Likely cattle",
+        "Dark Yellow: Strong AI confidence",
+        "",
+        "AI LEARNS and SAVES across sessions"
+    ]
+    for i,l in enumerate(lines):
+        screen.blit(bigfont.render(l, True, WHITE), (280, 150+i*32))
+
+# ---------------- LOOP ----------------
+running = True
+while running:
+    clock.tick(FPS)
+    screen.fill(GRASS)
+    draw_grid()
+
+    draw_points(scenario["water"], BLUE, 10)
+    draw_points(scenario["village"], PURPLE, 10)
+    draw_camps(scenario["camp"])
+    draw_points(scenario["veg"], VEG, 8)
+
+    if show_ai:
+        draw_ai_overlay(scenario)
+
+    draw_ui()
+    if show_key:
+        draw_key()
+
+    for e in pygame.event.get():
+        if e.type == pygame.QUIT:
+            running = False
+
+        if e.type == pygame.KEYDOWN:
+            if e.key == pygame.K_a:
+                show_ai = not show_ai
+            elif e.key == pygame.K_k:
+                show_key = not show_key
+            elif e.key == pygame.K_s:
+                torch.save(model.state_dict(), MODEL_PATH)
+                popup("AI saved")
+            elif e.key == pygame.K_n:
+                scenario = generate_scenario()
+                for _ in range(300):
+                    x,y = random.randint(0,GRID-1), random.randint(0,GRID-1)
+                    features = [
+                        min(dist((x,y), p) for p in scenario["water"]) if scenario["water"] else GRID,
+                        min(dist((x,y), p) for p in scenario["village"]) if scenario["village"] else GRID,
+                        min(dist((x,y), p) for p in scenario["camp"]) if scenario["camp"] else GRID,
+                        min(dist((x,y), p) for p in scenario["veg"]) if scenario["veg"] else GRID,
+                        scenario["food"],
+                        scenario["water_stress"],
+                        scenario["temp"],
+                        random.random(),
+                        random.random()
+                    ]
+                    train_X.append(features)
+                    train_y.append(compute_label(x,y,scenario))
+                train_ai()
+                popup("AI trained")
+
+            elif e.key == pygame.K_UP:
+                selected_var = (selected_var - 1) % len(variables)
+            elif e.key == pygame.K_DOWN:
+                selected_var = (selected_var + 1) % len(variables)
+            elif e.key == pygame.K_LEFTBRACKET:
+                v = variables[selected_var]
+                counts[v] = max(0, counts[v]-1)
+            elif e.key == pygame.K_RIGHTBRACKET:
+                counts[variables[selected_var]] += 1
+
+    pygame.display.flip()
+
+pygame.quit()
