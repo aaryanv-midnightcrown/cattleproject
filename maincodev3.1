@@ -1,0 +1,85 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import rasterio
+import numpy as np
+import os
+import json
+import matplotlib.pyplot as plt
+
+# ---------------- CONFIG ----------------
+DATA_DIR = "data/sentinel"
+MODEL_PATH = "model/cattle_cnn.pt"
+PATCH = 32
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# ---------------- LOAD SATELLITE ----------------
+def load_band(name):
+    with rasterio.open(os.path.join(DATA_DIR, name)) as src:
+        return src.read(1).astype(np.float32)
+
+red = load_band("B04.tif")
+nir = load_band("B08.tif")
+green = load_band("B03.tif")
+
+# ---------------- FEATURE ENGINEERING ----------------
+ndvi = (nir - red) / (nir + red + 1e-6)
+ndwi = (green - nir) / (green + nir + 1e-6)
+
+# Stack features
+features = np.stack([red, nir, green, ndvi, ndwi], axis=0)
+
+# ---------------- PATCH EXTRACTION ----------------
+def extract_patches(arr, size):
+    patches = []
+    h, w = arr.shape[1:]
+    for i in range(0, h-size, size):
+        for j in range(0, w-size, size):
+            patch = arr[:, i:i+size, j:j+size]
+            patches.append(patch)
+    return np.array(patches)
+
+patches = extract_patches(features, PATCH)
+patches = torch.tensor(patches).to(DEVICE)
+
+# ---------------- MODEL ----------------
+class CattleCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(5, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Flatten(),
+            nn.Linear(64 * 8 * 8, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+model = CattleCNN().to(DEVICE)
+if os.path.exists(MODEL_PATH):
+    model.load_state_dict(torch.load(MODEL_PATH))
+    print("✅ Loaded trained model")
+
+# ---------------- INFERENCE ----------------
+with torch.no_grad():
+    preds = model(patches).cpu().numpy()
+
+# ---------------- VISUALIZE ----------------
+heatmap = preds.reshape(
+    int(red.shape[0]/PATCH)-1,
+    int(red.shape[1]/PATCH)-1
+)
+
+plt.figure(figsize=(8,6))
+plt.imshow(heatmap, cmap="YlOrBr")
+plt.colorbar(label="Cattle Probability")
+plt.title("Predicted Cattle Presence")
+plt.show()
