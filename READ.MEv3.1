@@ -1,0 +1,228 @@
+# 🐄 AI-Driven Cattle Movement Prediction (v3)
+
+## Overview
+
+Unpredictable cattle movement in South Sudan contributes to local conflict, resource scarcity, and humanitarian risk. There is currently no reliable, real-time way to understand where cattle are located or how they are likely to move over time.
+
+This project explores how **AI-based mapping and predictive modeling**, using **open-source satellite imagery and environmental data**, can be used to **detect, predict, and visualize cattle presence and movement**.
+
+Version **v3** represents a major milestone. It transitions the project from rule-based inference to a **trainable neural network** with persistent learning, while maintaining a clean, interpretable visual interface.
+
+This system **does not use GPS collars or direct tracking**. All predictions rely on **satellite imagery and environmental signals**, aligned with real-world constraints.
+
+---
+
+## Key Features (v3)
+
+- Interactive spatial simulation
+- Trainable neural network (CNN)
+- AI confidence heatmap overlay
+- Persistent learning (save/load model)
+- Environmental & climate parameters
+- Symbol legend (key) for accessibility
+- Designed for real Sentinel-2 satellite data
+- Modular structure for future real-time deployment
+
+---
+
+## Repository Structure
+
+```text
+cattle-movement-ai/
+├── src/
+│   └── main.py                 # Main application (UI + AI training + inference)
+│
+├── data/
+│   ├── sentinel/               # Sentinel-2 satellite imagery (not committed)
+│   │   ├── B03.tif             # Green band
+│   │   ├── B04.tif             # Red band
+│   │   └── B08.tif             # Near-infrared band
+│   │
+│   └── climate.json            # Optional environmental metadata
+│
+├── model/
+│   └── cattle_cnn.pt           # Trained AI model (auto-generated)
+│
+├── tools/
+│   └── create_dummy_sentinel.py # Optional testing utility
+│
+├── README.md
+└── .gitignore
+Satellite Data Requirements
+The AI model is designed to operate on Sentinel-2 Level-2A imagery.
+
+Three spectral bands are required:
+
+File	Band	Description	Why it matters
+B03.tif	Green	Vegetation reflectance	Grass health
+B04.tif	Red	Chlorophyll absorption	Grazing quality
+B08.tif	Near-Infrared	Biomass density	Pasture availability
+These files must be placed in:
+
+data/sentinel/
+Obtaining Sentinel-2 Data (Recommended)
+Option A — Google Earth Engine (Preferred)
+Apply for access: https://earthengine.google.com
+
+Load the Sentinel-2 Level-2A collection
+
+Filter imagery by:
+
+Region: South Sudan
+
+Cloud cover < 10%
+
+Select and export the following bands:
+
+B03
+
+B04
+
+B08
+
+Export as GeoTIFF
+
+Rename the downloaded files:
+
+B03.tif
+B04.tif
+B08.tif
+and place them in:
+
+data/sentinel/
+Option B — Manual Download (ESA Hub)
+Use https://scihub.copernicus.eu
+
+Download Sentinel-2 products
+
+Extract .jp2 band files
+
+Convert to .tif using QGIS or GDAL
+
+Development Without Real Satellite Data
+For UI testing or early development, placeholder raster files can be generated:
+
+python tools/create_dummy_sentinel.py
+This creates synthetic .tif files so the application can run without real satellite imagery.
+
+⚠️ AI predictions will not be meaningful without real Sentinel-2 data.
+
+AI Model & Learning Persistence
+The AI component is a convolutional neural network (CNN) trained to predict cattle presence probability across space.
+
+The trained model is saved to:
+
+model/cattle_cnn.pt
+This file is created automatically after training
+
+Pressing Save AI in the application writes the model to disk
+
+Learning persists between sessions
+
+Deleting this file resets the AI’s knowledge
+
+This mirrors real-world ML workflows used in research and production systems.
+
+Environmental & Climate Metadata
+The optional file:
+
+data/climate.json
+can store environmental context that influences cattle movement:
+
+{
+  "avg_temperature_c": 34,
+  "rainfall_mm": 80,
+  "season": "dry",
+  "flood_risk": 0.6
+}
+This enables future multi-modal learning combining satellite imagery with climate data.
+
+Running the Project
+Requirements
+Python 3.10+
+
+PyTorch
+
+NumPy
+
+Rasterio
+
+Pygame
+
+Install dependencies:
+
+pip install torch numpy rasterio pygame
+Run the application:
+
+python src/main.py
+Controls & UI
+Action	Input
+Generate new scenario	Button (top-right)
+Toggle AI prediction overlay	Button (top-left)
+Open symbol & AI key	Button (top-center)
+Save AI learning	S key
+AI Prediction Overlay
+The AI produces a confidence heatmap indicating where cattle are likely to be.
+
+Color	Interpretation
+Dark Yellow	Very high confidence
+Yellow	Probable
+Light Yellow	Possible
+Green	Unlikely
+Confidence is relative within each scenario, ensuring that high-confidence regions always exist even as conditions change.
+
+GitHub Notes
+The following files should not be committed to the repository:
+
+data/sentinel/
+model/
+*.pt
+Recommended .gitignore entries:
+
+data/sentinel/
+model/
+*.pt
+This keeps the repository lightweight and reproducible.
+
+Disclaimer
+This project does not use GPS collars, tags, or direct tracking of animals.
+
+All predictions are derived from:
+
+Satellite imagery
+
+Environmental signals
+
+Learned spatial patterns
+
+The system is intended for research, planning, and early-warning insights, not individual animal tracking.
+
+Future Work
+Temporal modeling (multi-date satellite imagery)
+
+Movement forecasting using time-series models
+
+Conflict-risk overlays
+
+Integration with humanitarian dashboards
+
+Real-time ingestion pipelines
+
+Version Summary
+v3
+
+Trainable AI
+
+Persistent learning
+
+Interactive visualization
+
+Real satellite data support
+
+v3.1 (planned)
+
+Live satellite ingestion
+
+Time-aware prediction
+
+Scalable deployment pipeline
