@@ -1,0 +1,6 @@
+{
+  "temperature_celsius": 32,
+  "rainfall_mm": 120,
+  "season": "dry"
+  this is optional metadata, change this later if you want
+}
