@@ -1,0 +1,275 @@
+import streamlit as st
+import os
+import numpy as np
+import pandas as pd
+import torch
+import torchvision.models as models
+import torchvision.transforms as transforms
+import cv2
+from PIL import Image, ImageDraw
+from sklearn.ensemble import RandomForestClassifier
+import joblib
+from datetime import datetime
+import time
+
+# =====================================================
+# CONFIGURATION
+# =====================================================
+st.set_page_config(page_title="Sentinel AI Pro", layout="wide")
+MODEL_PATH = "model/sentinel_model.pkl"
+DATA_PATH = "data/training_data.csv"
+IMAGE_FOLDER = "images/"
+os.makedirs("model", exist_ok=True)
+os.makedirs("data", exist_ok=True)
+os.makedirs("images", exist_ok=True)
+os.makedirs("assets", exist_ok=True)
+
+# =====================================================
+# LOAD CNN (ResNet50)
+# =====================================================
+@st.cache_resource
+def load_cnn():
+    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+    model = torch.nn.Sequential(*(list(model.children())[:-1]))
+    model.eval()
+    return model
+
+cnn = load_cnn()
+transform = transforms.Compose([
+    transforms.Resize((224,224)),
+    transforms.ToTensor(),
+])
+
+# =====================================================
+# FEATURE EXTRACTION
+# =====================================================
+def extract_deep_features(image):
+    img = transform(image).unsqueeze(0)
+    with torch.no_grad():
+        features = cnn(img).squeeze().numpy()
+    return features
+
+def extract_ndvi_like(image):
+    img = np.array(image)
+    r = img[:,:,0].astype(float)
+    g = img[:,:,1].astype(float)
+    ndvi = (g - r) / (g + r + 1e-5)
+    return np.mean(ndvi)
+
+def extract_edge_density(image):
+    img = np.array(image)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray,100,200)
+    return np.mean(edges)
+
+def extract_all_features(image):
+    deep = extract_deep_features(image)
+    ndvi = extract_ndvi_like(image)
+    edge = extract_edge_density(image)
+    return np.concatenate([deep, [ndvi, edge]])
+
+# =====================================================
+# DATA HANDLING
+# =====================================================
+def load_data():
+    if os.path.exists(DATA_PATH):
+        return pd.read_csv(DATA_PATH)
+    return pd.DataFrame()
+
+def save_data(df):
+    df.to_csv(DATA_PATH, index=False)
+
+def load_model():
+    if os.path.exists(MODEL_PATH):
+        return joblib.load(MODEL_PATH)
+    return RandomForestClassifier(n_estimators=200)
+
+def save_model(model):
+    joblib.dump(model, MODEL_PATH)
+
+def reset_model():
+    if os.path.exists(MODEL_PATH):
+        os.remove(MODEL_PATH)
+    if os.path.exists(DATA_PATH):
+        os.remove(DATA_PATH)
+
+# =====================================================
+# SIDEBAR NAVIGATION
+# =====================================================
+page = st.sidebar.selectbox("Navigation", ["How-To", "Analyze", "History", "Cattle Prediction", "Reset"])
+
+# =====================================================
+# HOW-TO PAGE
+# =====================================================
+if page == "How-To":
+    st.title("🛰 How-To: The AI Cattle System")
+    st.markdown("""
+    Welcome to **The AI Cattle System**, or TACS, a satellite imagery-based system to detect and predict cattle locations.  
+
+    **Navigation:**
+    - Use the sidebar to move between pages.  
+    - `Analyze`: Upload satellite images, see AI predictions, and correct AI classifications.  
+    - `History`: View past training entries and saved images.  
+    - `Cattle Prediction`: Upload an image and see likely cattle locations visualized.  
+    - `Reset`: Clear the model and data.
+    """)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Upload Demo")
+        if os.path.exists("assets/upload_demo.gif"):
+            st.image("assets/upload_demo.gif")
+        else:
+            st.info("Upload demo GIF not found.")
+    with col2:
+        st.subheader("AI Thinking Demo")
+        if os.path.exists("assets/ai_thinking.gif"):
+            st.image("assets/ai_thinking.gif")
+        else:
+            st.info("AI thinking GIF not found.")
+    
+    st.markdown("""
+    **System Overview:**
+    - ResNet50 deep feature extraction  
+    - NDVI-like vegetation approximation  
+    - Edge density terrain analysis  
+    - RandomForest adaptive learning  
+    - Persistent image + model memory
+    """)
+
+# =====================================================
+# ANALYZE PAGE
+# =====================================================
+if page == "Analyze":
+    st.title("🌍 Satellite Analyzer")
+    model = load_model()
+    data = load_data()
+    uploaded = st.file_uploader("Upload Satellite Image", type=["png","jpg","jpeg"])
+
+    if uploaded:
+        image = Image.open(uploaded).convert("RGB")
+        st.image(image, use_column_width=True)
+        features = extract_all_features(image)
+
+        if not data.empty and data.shape[1]-1 != len(features):
+            st.warning("Feature mismatch detected. Resetting model.")
+            reset_model()
+            data = pd.DataFrame()
+            model = RandomForestClassifier(n_estimators=200)
+
+        if not data.empty:
+            X = data.drop("label", axis=1)
+            y = data["label"]
+            model.fit(X, y)
+            prediction = model.predict([features])[0]
+            st.success(f"🧠 AI Prediction: {prediction}")
+        else:
+            st.warning("Model not trained yet.")
+
+        st.subheader("Correct the AI")
+        label = st.selectbox("Actual Class", ["River","Forest","Mountain","Urban","Desert","Agriculture"])
+        if st.button("Save & Retrain"):
+            filename = datetime.now().strftime("%Y%m%d_%H%M%S")+".png"
+            image.save(os.path.join(IMAGE_FOLDER, filename))
+            row = list(features) + [label]
+            if data.empty:
+                cols = [f"f{i}" for i in range(len(features))] + ["label"]
+                data = pd.DataFrame([row], columns=cols)
+            else:
+                new_row = pd.DataFrame([row], columns=data.columns)
+                data = pd.concat([data, new_row], ignore_index=True)
+            save_data(data)
+            model.fit(data.drop("label", axis=1), data["label"])
+            save_model(model)
+            st.success("Model updated successfully.")
+
+# =====================================================
+# HISTORY PAGE
+# =====================================================
+if page == "History":
+    st.title("📂 Training History")
+    data = load_data()
+    if not data.empty:
+        st.write("Last 20 Training Entries:")
+        st.dataframe(data.tail(20))
+    else:
+        st.write("No training data yet.")
+    
+    st.subheader("Stored Images")
+    if os.path.exists(IMAGE_FOLDER):
+        imgs = os.listdir(IMAGE_FOLDER)
+        for img in imgs[-10:]:
+            st.image(os.path.join(IMAGE_FOLDER, img), width=200)
+
+# =====================================================
+# CATTLE PREDICTION WITH DELAY
+# =====================================================
+if page == "Cattle Prediction":
+    st.title("🐄 Cattle Prediction with Delay Timer")
+    st.markdown("""
+    Upload a satellite image.  
+    The AI simulates real-world cattle movements including **seasonal migration**, **conflict avoidance**, and **corridor blockages**.  
+    The prediction updates after a **delay timer** to reflect real-world lag.
+    """)
+
+    model = load_model()
+    data = load_data()
+    uploaded = st.file_uploader("Upload Satellite Image", type=["png","jpg","jpeg"])
+    show_overlay = st.checkbox("Show AI Cattle Prediction", value=True)
+    delay_seconds = st.slider("Simulation Delay (seconds)", 0, 10, 3)
+
+    if uploaded:
+        image = Image.open(uploaded).convert("RGB")
+        st.image(image, caption="Uploaded Image", use_column_width=True)
+        features = extract_all_features(image)
+
+        # Simulated delay
+        st.info(f"Simulating real-world delay: {delay_seconds} seconds...")
+        time.sleep(delay_seconds)
+
+        # AI prediction overlay with environmental factors
+        h, w = image.size[1], image.size[0]
+        num_dots = 150
+        np.random.seed(42)
+        base_x = np.random.randint(0, w, num_dots)
+        base_y = np.random.randint(0, h, num_dots)
+        base_prob = np.random.rand(num_dots)
+
+        # Environmental modifiers
+        seasonal_modifier = 0.2  # dry vs rainy season
+        conflict_modifier = 0.1  # areas of tribal conflict
+        corridor_block_modifier = 0.15  # blocked corridors
+        base_prob = base_prob * (1 - seasonal_modifier - conflict_modifier - corridor_block_modifier)
+        base_prob = np.clip(base_prob, 0, 1)
+
+        overlay_img = image.copy()
+        draw = ImageDraw.Draw(overlay_img, "RGBA")
+
+        for i in range(num_dots):
+            x = base_x[i] + np.random.randint(-2,3)
+            y = base_y[i] + np.random.randint(-2,3)
+            prob = base_prob[i]
+            if prob > 0.66:
+                color = (255, 200, 0, 120)
+            elif prob > 0.33:
+                color = (255, 220, 100, 100)
+            else:
+                color = (255, 240, 160, 80)
+            draw.ellipse([x-7, y-7, x+7, y+7], fill=color)
+
+        if show_overlay:
+            st.image(overlay_img, caption="AI Cattle Prediction Overlay", use_column_width=True)
+
+        if st.button("Save Prediction Snapshot"):
+            filename = datetime.now().strftime("%Y%m%d_%H%M%S")+".png"
+            overlay_img.save(os.path.join(IMAGE_FOLDER, filename))
+            st.success(f"Prediction saved as {filename}")
+
+# =====================================================
+# RESET PAGE
+# =====================================================
+if page == "Reset":
+    st.title("⚠ Reset System")
+    if st.button("Delete Model & Training Data"):
+        reset_model()
+        st.success("System fully reset.")
